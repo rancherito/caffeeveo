@@ -1,7 +1,6 @@
-import { Component, inject, effect, ElementRef, ViewChild, OnDestroy, PLATFORM_ID, ChangeDetectionStrategy, ViewChildren, QueryList } from '@angular/core';
+import { Component, inject, effect, ElementRef, ViewChild, OnDestroy, PLATFORM_ID, ChangeDetectionStrategy, AfterViewInit, ChangeDetectorRef, computed } from '@angular/core';
 import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { EditorStore } from '../../store/editor.store';
-import { Clip } from '../../models/editor.models';
 
 @Component({
     selector: 'app-preview-player',
@@ -11,27 +10,35 @@ import { Clip } from '../../models/editor.models';
     template: `
         <div class="preview-container">
             <div class="screen">
-                <!-- Render active visual clips -->
-                @for (clip of activeVisualClips(); track clip.id) {
-                    <div class="clip-layer" [style.z-index]="getTrackIndex(clip.trackId)">
-                        @if (clip.type === 'video') {
-                            <video [src]="getAssetUrl(clip.assetId)" 
-                                   class="media-element visual-media"
-                                   [id]="'media-' + clip.id">
-                            </video>
-                        } @else if (clip.type === 'image') {
-                            <img [src]="getAssetUrl(clip.assetId)" class="media-element">
-                        }
-                    </div>
+                @if (activeVisualClip(); as clip) {
+                    <div class="clip-info">Clip: {{ clip.name }} ({{ clip.type }})</div>
+                    @if (clip.type === 'video') {
+                        <video 
+                            #videoElement
+                            [src]="getAssetUrl(clip.assetId)"
+                            class="media-display"
+                            playsinline
+                            (loadedmetadata)="onVideoLoaded($event)"
+                            (error)="onVideoError($event)">
+                        </video>
+                    } @else if (clip.type === 'image') {
+                        <img 
+                            [src]="getAssetUrl(clip.assetId)"
+                            class="media-display"
+                            alt="Preview">
+                    }
+                } @else {
+                    <div class="no-content">Sin contenido en tiempo {{ formatTime(store.currentTime()) }}</div>
                 }
             </div>
             
             <!-- Hidden Audio Elements -->
-            <div class="audio-container" style="display: none;">
+            <div style="display: none;">
                 @for (clip of activeAudioClips(); track clip.id) {
-                    <audio [src]="getAssetUrl(clip.assetId)"
-                           class="media-element audio-media"
-                           [id]="'media-' + clip.id">
+                    <audio 
+                        [src]="getAssetUrl(clip.assetId)"
+                        [id]="'audio-' + clip.id"
+                        class="audio-element">
                     </audio>
                 }
             </div>
@@ -48,29 +55,38 @@ import { Clip } from '../../models/editor.models';
             flex-direction: column;
             height: 100%;
             background: #000;
+            overflow: hidden;
         }
         .screen {
             flex: 1;
             position: relative;
-            overflow: hidden;
             display: flex;
             align-items: center;
             justify-content: center;
+            background: #1a1a1a;
         }
-        .clip-layer {
+        .clip-info {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            pointer-events: none; 
+            top: 10px;
+            left: 10px;
+            color: #00ff00;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            font-size: 12px;
+            z-index: 10;
         }
-        .media-element {
+        .media-display {
             max-width: 100%;
             max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            background: #000;
+            border: 2px solid #00ff00;
+        }
+        .no-content {
+            color: #666;
+            font-size: 18px;
         }
         .controls {
             height: 50px;
@@ -81,58 +97,126 @@ import { Clip } from '../../models/editor.models';
             gap: 1rem;
             color: white;
         }
+        button {
+            padding: 0.5rem 1rem;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background: #0052a3;
+        }
+        button:active {
+            background: #003d7a;
+        }
+        .time {
+            font-family: monospace;
+            font-size: 14px;
+        }
     `]
 })
-export class PreviewPlayerComponent implements OnDestroy {
+export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     store = inject(EditorStore);
     private platformId = inject(PLATFORM_ID);
+    private cdr = inject(ChangeDetectorRef);
+
+    @ViewChild('videoElement') videoElement?: ElementRef<HTMLVideoElement>;
+
     private animationFrameId: number | null = null;
-    private lastTime: number = 0;
+    private audioElements: Map<string, HTMLAudioElement> = new Map();
+    private lastFrameTime: number | null = null;
+
+    // Computed signals for active clips
+    activeVisualClip = computed(() => {
+        const time = this.store.currentTime();
+        const allClips = this.store.clips();
+        const clips = allClips.filter(c =>
+            (c.type === 'video' || c.type === 'image') &&
+            time >= c.startTime && time < c.startTime + c.duration
+        );
+        const result = clips[clips.length - 1] || null;
+        console.log('activeVisualClip computed at time', time, ':', result);
+        return result;
+    });
+
+    activeAudioClips = computed(() => {
+        const time = this.store.currentTime();
+        return this.store.clips().filter(c =>
+            c.type === 'audio' &&
+            time >= c.startTime && time < c.startTime + c.duration
+        );
+    });
 
     constructor() {
-        // Effect to handle playback loop
-        effect(() => {
-            if (!isPlatformBrowser(this.platformId)) return;
+        console.log('PreviewPlayerComponent constructor');
+        if (!isPlatformBrowser(this.platformId)) return;
 
-            if (this.store.isPlaying()) {
-                this.lastTime = performance.now();
-                this.loop();
+        effect(() => {
+            const isPlaying = this.store.isPlaying();
+            console.log('isPlaying changed:', isPlaying);
+            if (isPlaying) {
+                this.startPlayback();
             } else {
-                if (this.animationFrameId) {
-                    cancelAnimationFrame(this.animationFrameId);
-                    this.animationFrameId = null;
-                }
-                // Pause all media when stopping
-                this.pauseAllMedia();
+                this.stopPlayback();
             }
         });
 
-        // Effect for scrubbing (when paused)
         effect(() => {
             const time = this.store.currentTime();
-            const isPlaying = this.store.isPlaying();
-            
-            if (!isPlaying && isPlatformBrowser(this.platformId)) {
-                // Use setTimeout to allow DOM to update with new active clips
-                setTimeout(() => {
-                    this.syncMedia(time);
-                }, 0);
+            console.log('currentTime changed:', time);
+            if (!this.store.isPlaying()) {
+                this.seek(time);
             }
+        });
+
+        effect(() => {
+            const clips = this.store.clips();
+            console.log('clips changed, count:', clips.length, clips);
+            this.cdr.markForCheck();
         });
     }
 
-    loop() {
-        if (!isPlatformBrowser(this.platformId)) return;
-        
-        const now = performance.now();
-        const delta = (now - this.lastTime) / 1000;
-        this.lastTime = now;
+    ngAfterViewInit(): void {
+        console.log('ngAfterViewInit, videoElement:', this.videoElement);
+        console.log('Current time:', this.store.currentTime());
+        console.log('Total clips:', this.store.clips().length);
+        setTimeout(() => {
+            this.seek(this.store.currentTime());
+            this.cdr.detectChanges();
+        }, 100);
+    }
 
-        const newTime = this.store.currentTime() + delta;
-        
+    private startPlayback(): void {
+        this.lastFrameTime = performance.now();
+        this.loop();
+    }
+
+    private stopPlayback(): void {
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        this.pauseAllMedia();
+    }
+
+    private loop(): void {
+        if (!this.store.isPlaying()) return;
+
+        const now = performance.now();
+        const delta = (now - (this.lastFrameTime || now)) / 1000;
+        this.lastFrameTime = now;
+
+        const currentTime = this.store.currentTime();
+        const newTime = currentTime + delta;
+
         if (newTime >= this.store.totalDuration()) {
-            this.store.togglePlay(); // Stop at end
-            this.store.setCurrentTime(0); // Reset or stay at end
+            this.store.setCurrentTime(this.store.totalDuration());
+            this.store.togglePlay();
         } else {
             this.store.setCurrentTime(newTime);
             this.syncMedia(newTime);
@@ -140,76 +224,94 @@ export class PreviewPlayerComponent implements OnDestroy {
         }
     }
 
-    syncMedia(globalTime: number) {
-        // Find all media elements in the DOM
-        const mediaElements = document.querySelectorAll('.media-element') as NodeListOf<HTMLMediaElement>;
+    private syncMedia(time: number): void {
+        // Sync video
+        const videoClip = this.activeVisualClip();
+        if (videoClip?.type === 'video' && this.videoElement) {
+            const video = this.videoElement.nativeElement;
+            const clipTime = (time - videoClip.startTime) + videoClip.offset;
+
+            if (video.paused) {
+                video.currentTime = clipTime;
+                video.play().catch(e => console.warn('Video play failed:', e));
+            } else if (Math.abs(video.currentTime - clipTime) > 0.1) {
+                video.currentTime = clipTime;
+            }
+        }
+
+        // Sync audio
+        const audioClips = this.activeAudioClips();
+        audioClips.forEach(clip => {
+            const audioEl = this.getOrCreateAudioElement(clip.id, this.getAssetUrl(clip.assetId));
+            const clipTime = (time - clip.startTime) + clip.offset;
+
+            if (audioEl.paused) {
+                audioEl.currentTime = clipTime;
+                audioEl.play().catch(e => console.warn('Audio play failed:', e));
+            }
+        });
+    }
+
+    private seek(time: number): void {
+        console.log('Seeking to time:', time);
+        const visualClip = this.activeVisualClip();
         
-        mediaElements.forEach(el => {
-            if (el.tagName === 'IMG') return;
+        if (this.videoElement && visualClip?.type === 'video') {
+            const video = this.videoElement.nativeElement;
+            const clipTime = (time - visualClip.startTime) + visualClip.offset;
+            console.log('Setting video time to:', clipTime, 'video src:', video.src);
+            video.currentTime = clipTime;
+        }
 
-            const clipId = el.id.replace('media-', '');
-            const clip = this.store.clips().find(c => c.id === clipId);
-            
-            if (clip) {
-                const targetTime = (globalTime - clip.startTime) + clip.offset;
-                
-                // If the element is not playing, play it
-                if (el.paused) {
-                    el.play().catch(() => {}); // Ignore play errors (e.g. user interaction required)
-                }
-
-                // Sync if drifted too much (> 0.2s)
-                if (Math.abs(el.currentTime - targetTime) > 0.2) {
-                    el.currentTime = targetTime;
-                }
-            }
+        const audioClips = this.activeAudioClips();
+        audioClips.forEach(clip => {
+            const audioEl = this.getOrCreateAudioElement(clip.id, this.getAssetUrl(clip.assetId));
+            audioEl.currentTime = (time - clip.startTime) + clip.offset;
         });
     }
 
-    pauseAllMedia() {
-        const mediaElements = document.querySelectorAll('.media-element') as NodeListOf<HTMLMediaElement>;
-        mediaElements.forEach(el => {
-            if (el.tagName !== 'IMG' && !el.paused) {
-                el.pause();
-            }
+    private pauseAllMedia(): void {
+        if (this.videoElement) {
+            this.videoElement.nativeElement.pause();
+        }
+        this.audioElements.forEach(audio => audio.pause());
+    }
+
+    private getOrCreateAudioElement(clipId: string, url: string): HTMLAudioElement {
+        if (!this.audioElements.has(clipId)) {
+            const audio = new Audio();
+            audio.src = url;
+            audio.muted = false;
+            this.audioElements.set(clipId, audio);
+        }
+        return this.audioElements.get(clipId)!;
+    }
+
+    onVideoLoaded(event: Event): void {
+        const video = event.target as HTMLVideoElement;
+        console.log('Video loaded!', {
+            duration: video.duration,
+            width: video.videoWidth,
+            height: video.videoHeight,
+            src: video.src
         });
     }
 
-    activeVisualClips() {
-        const time = this.store.currentTime();
-        return this.store.clips().filter(c => 
-            (c.type === 'video' || c.type === 'image') &&
-            time >= c.startTime && 
-            time < (c.startTime + c.duration)
-        );
+    onVideoError(event: Event): void {
+        const video = event.target as HTMLVideoElement;
+        console.error('Video error!', video.error, video.src);
     }
 
-    activeAudioClips() {
-        const time = this.store.currentTime();
-        return this.store.clips().filter(c => 
-            c.type === 'audio' &&
-            time >= c.startTime && 
-            time < (c.startTime + c.duration)
-        );
-    }
-
-    getTrackIndex(trackId: string): number {
-        return this.store.tracks().findIndex(t => t.id === trackId);
+    togglePlay(): void {
+        this.lastFrameTime = null;
+        this.store.togglePlay();
     }
 
     getAssetUrl(assetId: string): string {
         const asset = this.store.assets().find(a => a.id === assetId);
-        return asset ? asset.url : '';
-    }
-
-    getCurrentClipTime(clip: Clip): number {
-        // Calculate where we are in the clip source
-        // (Current Timeline Time - Clip Start Time) + Clip Offset
-        return (this.store.currentTime() - clip.startTime) + clip.offset;
-    }
-
-    togglePlay() {
-        this.store.togglePlay();
+        const url = asset?.url || '';
+        console.log('getAssetUrl for', assetId, ':', url);
+        return url;
     }
 
     formatTime(seconds: number): string {
@@ -219,9 +321,9 @@ export class PreviewPlayerComponent implements OnDestroy {
         return `${m}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
     }
 
-    ngOnDestroy() {
-        if (this.animationFrameId) {
-            cancelAnimationFrame(this.animationFrameId);
-        }
+    ngOnDestroy(): void {
+        this.stopPlayback();
+        this.audioElements.forEach(audio => audio.pause());
+        this.audioElements.clear();
     }
 }
