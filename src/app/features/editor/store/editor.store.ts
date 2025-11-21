@@ -28,29 +28,137 @@ export class EditorStore {
     });
 
     // Actions
-    addAsset(file: File, type: AssetType) {
+    async addAsset(file: File, type: AssetType) {
         const url = URL.createObjectURL(file);
-        const asset: Asset = {
-            id: crypto.randomUUID(),
-            name: file.name,
-            type,
-            url,
-            duration: 0 // In a real app, we'd detect this
-        };
 
-        // For demo purposes, let's fake duration for video/audio
-        if (type !== 'image') {
-            const video = document.createElement('video');
-            video.preload = 'metadata';
-            video.onloadedmetadata = () => {
-                asset.duration = video.duration;
+        if (type === 'video') {
+            // Extraer metadatos primero
+            const metadata = await this.extractVideoMetadata(file, url);
+            this.assets.update(assets => [...assets, metadata]);
+            
+            // Extraer frames en background
+            this.extractFrames(metadata.id);
+        } else if (type === 'image') {
+            const asset: Asset = {
+                id: crypto.randomUUID(),
+                name: file.name,
+                type,
+                url,
+                duration: 5,
+                size: file.size
+            };
+            this.assets.update(assets => [...assets, asset]);
+        } else if (type === 'audio') {
+            const audio = document.createElement('audio');
+            audio.preload = 'metadata';
+            audio.onloadedmetadata = () => {
+                const asset: Asset = {
+                    id: crypto.randomUUID(),
+                    name: file.name,
+                    type,
+                    url,
+                    duration: audio.duration,
+                    size: file.size
+                };
                 this.assets.update(assets => [...assets, asset]);
             };
-            video.src = url;
-        } else {
-            asset.duration = 5; // Default image duration
-            this.assets.update(assets => [...assets, asset]);
+            audio.src = url;
         }
+    }
+
+    private async extractVideoMetadata(file: File, url: string): Promise<Asset> {
+        return new Promise((resolve, reject) => {
+            const video = document.createElement('video');
+            video.preload = 'metadata';
+            
+            video.onloadedmetadata = () => {
+                const frameRate = 30;
+                const totalFrames = Math.ceil(video.duration * frameRate);
+                
+                resolve({
+                    id: crypto.randomUUID(),
+                    name: file.name,
+                    type: 'video',
+                    url,
+                    duration: video.duration,
+                    width: video.videoWidth,
+                    height: video.videoHeight,
+                    size: file.size,
+                    frames: [],
+                    frameRate,
+                    totalFrames,
+                    isProcessing: true,
+                    processingProgress: 0
+                });
+            };
+            
+            video.onerror = () => {
+                URL.revokeObjectURL(url);
+                reject(new Error(`Error al cargar: ${file.name}`));
+            };
+            
+            video.src = url;
+        });
+    }
+
+    private async extractFrames(assetId: string): Promise<void> {
+        const assetIndex = this.assets().findIndex(a => a.id === assetId);
+        if (assetIndex === -1) return;
+        
+        const asset = this.assets()[assetIndex];
+        if (!asset.url || asset.type !== 'video') return;
+        
+        const video = document.createElement('video');
+        video.src = asset.url;
+        video.muted = true;
+        
+        await new Promise((resolve) => {
+            video.onloadeddata = resolve;
+            video.load();
+        });
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = asset.width || 1920;
+        canvas.height = asset.height || 1080;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+        
+        const frames: ImageBitmap[] = [];
+        const frameInterval = 1 / (asset.frameRate || 30);
+        
+        for (let i = 0; i < (asset.totalFrames || 0); i++) {
+            const time = i * frameInterval;
+            
+            await new Promise<void>((resolve) => {
+                video.currentTime = time;
+                video.onseeked = () => resolve();
+            });
+            
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageBitmap = await createImageBitmap(canvas);
+            frames.push(imageBitmap);
+            
+            // Actualizar progreso
+            this.assets.update(current => {
+                const updated = [...current];
+                updated[assetIndex] = {
+                    ...updated[assetIndex],
+                    frames: [...frames],
+                    processingProgress: ((i + 1) / (asset.totalFrames || 1)) * 100
+                };
+                return updated;
+            });
+        }
+        
+        // Marcar como completado
+        this.assets.update(current => {
+            const updated = [...current];
+            updated[assetIndex] = {
+                ...updated[assetIndex],
+                isProcessing: false,
+                processingProgress: 100
+            };
+            return updated;
+        });
     }
 
     addClipToTrack(asset: Asset, trackId: string, startTime: number) {
@@ -62,7 +170,12 @@ export class EditorStore {
             offset: 0,
             trackId,
             name: asset.name,
-            type: asset.type
+            type: asset.type,
+            scale: 1,
+            rotation: 0,
+            opacity: 1,
+            x: 0,
+            y: 0
         };
 
         this.clips.update(clips => [...clips, newClip]);

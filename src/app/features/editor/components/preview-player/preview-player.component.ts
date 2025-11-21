@@ -1,6 +1,7 @@
-import { Component, inject, effect, ElementRef, ViewChild, OnDestroy, PLATFORM_ID, ChangeDetectionStrategy, AfterViewInit, ChangeDetectorRef, computed } from '@angular/core';
+import { Component, inject, effect, ElementRef, viewChild, OnDestroy, PLATFORM_ID, ChangeDetectionStrategy, AfterViewInit, ChangeDetectorRef, computed, signal } from '@angular/core';
 import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { EditorStore } from '../../store/editor.store';
+import { Asset, Clip } from '../../models/editor.models';
 
 @Component({
     selector: 'app-preview-player',
@@ -10,25 +11,12 @@ import { EditorStore } from '../../store/editor.store';
     template: `
         <div class="preview-container">
             <div class="screen">
+                <canvas #canvasElement class="preview-canvas"></canvas>
+                
                 @if (activeVisualClip(); as clip) {
-                    <div class="clip-info">Clip: {{ clip.name }} ({{ clip.type }})</div>
-                    @if (clip.type === 'video') {
-                        <video 
-                            #videoElement
-                            [src]="getAssetUrl(clip.assetId)"
-                            class="media-display"
-                            playsinline
-                            (loadedmetadata)="onVideoLoaded($event)"
-                            (error)="onVideoError($event)">
-                        </video>
-                    } @else if (clip.type === 'image') {
-                        <img 
-                            [src]="getAssetUrl(clip.assetId)"
-                            class="media-display"
-                            alt="Preview">
-                    }
-                } @else {
-                    <div class="no-content">Sin contenido en tiempo {{ formatTime(store.currentTime()) }}</div>
+                    <div class="clip-info">
+                        {{ clip.name }} · Frame: {{ currentFrame() }}/{{ getTotalFrames(clip) }}
+                    </div>
                 }
             </div>
             
@@ -44,8 +32,8 @@ import { EditorStore } from '../../store/editor.store';
             </div>
 
             <div class="controls">
-                <button (click)="togglePlay()">{{ store.isPlaying() ? 'Pause' : 'Play' }}</button>
-                <span class="time">{{ formatTime(store.currentTime()) }}</span>
+                <button (click)="togglePlay()">{{ store.isPlaying() ? '⏸ Pause' : '▶ Play' }}</button>
+                <span class="time">{{ formatTime(store.currentTime()) }} / {{ formatTime(store.totalDuration()) }}</span>
             </div>
         </div>
     `,
@@ -65,6 +53,13 @@ import { EditorStore } from '../../store/editor.store';
             justify-content: center;
             background: #1a1a1a;
         }
+        .preview-canvas {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            background: #000;
+        }
         .clip-info {
             position: absolute;
             top: 10px;
@@ -74,19 +69,7 @@ import { EditorStore } from '../../store/editor.store';
             padding: 5px 10px;
             font-size: 12px;
             z-index: 10;
-        }
-        .media-display {
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
-            object-fit: contain;
-            background: #000;
-            border: 2px solid #00ff00;
-        }
-        .no-content {
-            color: #666;
-            font-size: 18px;
+            font-family: monospace;
         }
         .controls {
             height: 50px;
@@ -125,11 +108,14 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     private platformId = inject(PLATFORM_ID);
     private cdr = inject(ChangeDetectorRef);
 
-    @ViewChild('videoElement') videoElement?: ElementRef<HTMLVideoElement>;
+    private canvas = viewChild.required<ElementRef<HTMLCanvasElement>>('canvasElement');
 
     private animationFrameId: number | null = null;
     private audioElements: Map<string, HTMLAudioElement> = new Map();
     private lastFrameTime: number | null = null;
+    private startTime: number = 0;
+    
+    readonly currentFrame = signal(0);
 
     // Computed signals for active clips
     activeVisualClip = computed(() => {
@@ -167,10 +153,9 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
         });
 
         effect(() => {
-            const time = this.store.currentTime();
-            console.log('currentTime changed:', time);
-            if (!this.store.isPlaying()) {
-                this.seek(time);
+            const visualClip = this.activeVisualClip();
+            if (visualClip) {
+                this.renderCurrentFrame();
             }
         });
 
@@ -182,17 +167,33 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     }
 
     ngAfterViewInit(): void {
-        console.log('ngAfterViewInit, videoElement:', this.videoElement);
-        console.log('Current time:', this.store.currentTime());
-        console.log('Total clips:', this.store.clips().length);
+        console.log('ngAfterViewInit');
+        this.setupCanvas();
         setTimeout(() => {
-            this.seek(this.store.currentTime());
+            this.renderCurrentFrame();
             this.cdr.detectChanges();
         }, 100);
     }
 
+    private setupCanvas(): void {
+        const canvasEl = this.canvas().nativeElement;
+        // Formato TikTok 9:16 (1080x1920)
+        canvasEl.width = 1080;
+        canvasEl.height = 1920;
+    }
+
+    getTotalFrames(clip: Clip): number {
+        const asset = this.getAsset(clip.assetId);
+        return asset?.totalFrames || 0;
+    }
+
+    private getAsset(assetId: string): Asset | undefined {
+        return this.store.assets().find(a => a.id === assetId);
+    }
+
     private startPlayback(): void {
         this.lastFrameTime = performance.now();
+        this.startTime = 0;
         this.loop();
     }
 
@@ -204,7 +205,7 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
         this.pauseAllMedia();
     }
 
-    private loop(): void {
+    private loop = (): void => {
         if (!this.store.isPlaying()) return;
 
         const now = performance.now();
@@ -219,61 +220,116 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
             this.store.togglePlay();
         } else {
             this.store.setCurrentTime(newTime);
-            this.syncMedia(newTime);
-            this.animationFrameId = requestAnimationFrame(() => this.loop());
+            this.renderCurrentFrame();
+            this.syncAudio(newTime);
+            this.animationFrameId = requestAnimationFrame(this.loop);
+        }
+    };
+
+    private renderCurrentFrame(): void {
+        const clip = this.activeVisualClip();
+        if (!clip) {
+            this.clearCanvas();
+            return;
+        }
+
+        const asset = this.getAsset(clip.assetId);
+        if (!asset) return;
+
+        const canvasEl = this.canvas().nativeElement;
+        const ctx = canvasEl.getContext('2d');
+        if (!ctx) return;
+
+        const time = this.store.currentTime();
+        const clipTime = time - clip.startTime + (clip.offset || 0);
+
+        if (clip.type === 'video' && asset.frames && asset.frames.length > 0) {
+            const frameRate = asset.frameRate || 30;
+            const frameIndex = Math.floor(clipTime * frameRate);
+            const clampedIndex = Math.max(0, Math.min(frameIndex, asset.frames.length - 1));
+            
+            this.currentFrame.set(clampedIndex);
+            
+            const frame = asset.frames[clampedIndex];
+            if (frame) {
+                this.renderFrameToCanvas(ctx, frame, canvasEl.width, canvasEl.height, clip);
+            }
+        } else if (clip.type === 'image') {
+            // Renderizar imagen
+            const img = new Image();
+            img.src = asset.url;
+            img.onload = () => {
+                this.renderFrameToCanvas(ctx, img, canvasEl.width, canvasEl.height, clip);
+            };
         }
     }
 
-    private syncMedia(time: number): void {
-        // Sync video
-        const videoClip = this.activeVisualClip();
-        if (videoClip?.type === 'video' && this.videoElement) {
-            const video = this.videoElement.nativeElement;
-            const clipTime = (time - videoClip.startTime) + videoClip.offset;
-
-            if (video.paused) {
-                video.currentTime = clipTime;
-                video.play().catch(e => console.warn('Video play failed:', e));
-            } else if (Math.abs(video.currentTime - clipTime) > 0.1) {
-                video.currentTime = clipTime;
-            }
+    private renderFrameToCanvas(
+        ctx: CanvasRenderingContext2D,
+        source: ImageBitmap | HTMLImageElement,
+        canvasWidth: number,
+        canvasHeight: number,
+        clip: Clip
+    ): void {
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+        
+        const canvasAspect = canvasWidth / canvasHeight;
+        const sourceAspect = source.width / source.height;
+        
+        let drawWidth, drawHeight, offsetX, offsetY;
+        
+        // Ajuste tipo "cover" para formato TikTok
+        if (sourceAspect > canvasAspect) {
+            drawHeight = canvasHeight;
+            drawWidth = drawHeight * sourceAspect;
+            offsetX = (canvasWidth - drawWidth) / 2;
+            offsetY = 0;
+        } else {
+            drawWidth = canvasWidth;
+            drawHeight = drawWidth / sourceAspect;
+            offsetX = 0;
+            offsetY = (canvasHeight - drawHeight) / 2;
         }
+        
+        // Aplicar transformaciones del clip
+        ctx.save();
+        ctx.globalAlpha = clip.opacity || 1;
+        
+        const centerX = canvasWidth / 2 + (clip.x || 0);
+        const centerY = canvasHeight / 2 + (clip.y || 0);
+        
+        ctx.translate(centerX, centerY);
+        ctx.rotate((clip.rotation || 0) * Math.PI / 180);
+        ctx.scale(clip.scale || 1, clip.scale || 1);
+        ctx.translate(-centerX, -centerY);
+        
+        ctx.drawImage(source, offsetX, offsetY, drawWidth, drawHeight);
+        ctx.restore();
+    }
 
-        // Sync audio
+    private clearCanvas(): void {
+        const canvasEl = this.canvas().nativeElement;
+        const ctx = canvasEl.getContext('2d');
+        if (ctx) {
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+        }
+    }
+
+    private syncAudio(time: number): void {
         const audioClips = this.activeAudioClips();
         audioClips.forEach(clip => {
             const audioEl = this.getOrCreateAudioElement(clip.id, this.getAssetUrl(clip.assetId));
-            const clipTime = (time - clip.startTime) + clip.offset;
+            const clipTime = (time - clip.startTime) + (clip.offset || 0);
 
             if (audioEl.paused) {
                 audioEl.currentTime = clipTime;
-                audioEl.play().catch(e => console.warn('Audio play failed:', e));
+                audioEl.play().catch((e: Error) => console.warn('Audio play failed:', e));
             }
-        });
-    }
-
-    private seek(time: number): void {
-        console.log('Seeking to time:', time);
-        const visualClip = this.activeVisualClip();
-        
-        if (this.videoElement && visualClip?.type === 'video') {
-            const video = this.videoElement.nativeElement;
-            const clipTime = (time - visualClip.startTime) + visualClip.offset;
-            console.log('Setting video time to:', clipTime, 'video src:', video.src);
-            video.currentTime = clipTime;
-        }
-
-        const audioClips = this.activeAudioClips();
-        audioClips.forEach(clip => {
-            const audioEl = this.getOrCreateAudioElement(clip.id, this.getAssetUrl(clip.assetId));
-            audioEl.currentTime = (time - clip.startTime) + clip.offset;
         });
     }
 
     private pauseAllMedia(): void {
-        if (this.videoElement) {
-            this.videoElement.nativeElement.pause();
-        }
         this.audioElements.forEach(audio => audio.pause());
     }
 
@@ -287,21 +343,6 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
         return this.audioElements.get(clipId)!;
     }
 
-    onVideoLoaded(event: Event): void {
-        const video = event.target as HTMLVideoElement;
-        console.log('Video loaded!', {
-            duration: video.duration,
-            width: video.videoWidth,
-            height: video.videoHeight,
-            src: video.src
-        });
-    }
-
-    onVideoError(event: Event): void {
-        const video = event.target as HTMLVideoElement;
-        console.error('Video error!', video.error, video.src);
-    }
-
     togglePlay(): void {
         this.lastFrameTime = null;
         this.store.togglePlay();
@@ -310,7 +351,6 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     getAssetUrl(assetId: string): string {
         const asset = this.store.assets().find(a => a.id === assetId);
         const url = asset?.url || '';
-        console.log('getAssetUrl for', assetId, ':', url);
         return url;
     }
 

@@ -7,6 +7,15 @@ export interface Asset {
     url: string;
     duration?: number; // in seconds
     thumbnail?: string;
+    // Frame-based video handling
+    frames?: ImageBitmap[];
+    frameRate?: number;
+    totalFrames?: number;
+    width?: number;
+    height?: number;
+    size?: number;
+    isProcessing?: boolean;
+    processingProgress?: number;
 }
 
 export interface Clip {
@@ -18,6 +27,12 @@ export interface Clip {
     trackId: string;
     name: string;
     type: AssetType;
+    // Transform properties for video editing
+    scale?: number;
+    rotation?: number;
+    opacity?: number;
+    x?: number;
+    y?: number;
 }
 
 export interface Track {

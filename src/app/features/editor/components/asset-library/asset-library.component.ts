@@ -18,11 +18,20 @@ import { Asset, AssetType } from '../../models/editor.models';
             
             <div class="assets-list">
                 @for (asset of store.assets(); track asset.id) {
-                    <div class="asset-item" draggable="true" (dragstart)="onDragStart($event, asset)">
+                    <div class="asset-item" 
+                         [class.processing]="asset.isProcessing"
+                         draggable="true" 
+                         (dragstart)="onDragStart($event, asset)">
                         <div class="thumbnail">
                             @if (asset.type === 'image') {
                                 <img [src]="asset.url" [alt]="asset.name">
                             } @else if (asset.type === 'video') {
+                                @if (asset.isProcessing) {
+                                    <div class="processing-overlay">
+                                        <div class="spinner"></div>
+                                        <span>{{ asset.processingProgress?.toFixed(0) }}%</span>
+                                    </div>
+                                }
                                 <video [src]="asset.url"></video>
                             } @else {
                                 <div class="audio-icon">🎵</div>
@@ -30,9 +39,18 @@ import { Asset, AssetType } from '../../models/editor.models';
                         </div>
                         <div class="info">
                             <span class="name">{{ asset.name }}</span>
-                            <span class="duration">{{ formatDuration(asset.duration || 0) }}</span>
+                            <span class="duration">
+                                {{ formatDuration(asset.duration || 0) }}
+                                @if (asset.frames && !asset.isProcessing) {
+                                    · {{ asset.frames.length }}f
+                                }
+                            </span>
                         </div>
-                        <button (click)="addToTimeline(asset)">+</button>
+                        <button 
+                            (click)="addToTimeline(asset)"
+                            [disabled]="asset.isProcessing">
+                            +
+                        </button>
                     </div>
                 } @empty {
                     <div class="empty-state">No assets imported</div>
@@ -70,6 +88,10 @@ import { Asset, AssetType } from '../../models/editor.models';
             overflow: hidden;
             cursor: grab;
             position: relative;
+            transition: opacity 0.3s;
+        }
+        .asset-item.processing {
+            opacity: 0.7;
         }
         .thumbnail {
             height: 80px;
@@ -77,6 +99,34 @@ import { Asset, AssetType } from '../../models/editor.models';
             display: flex;
             align-items: center;
             justify-content: center;
+            position: relative;
+        }
+        .processing-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 10px;
+            z-index: 10;
+        }
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #007acc;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 5px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
         .thumbnail img, .thumbnail video {
             width: 100%;
@@ -104,6 +154,15 @@ import { Asset, AssetType } from '../../models/editor.models';
             padding: 0.5rem 1rem;
             border-radius: 4px;
             cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover:not(:disabled) {
+            background: #005a9e;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.5;
         }
     `]
 })
