@@ -112,7 +112,7 @@ interface SelectionBox {
                                 <div
                                     class="clip"
                                     [class.selected]="isClipSelected(clip.id)"
-                                    [class.dragging]="dragState?.clipIds.includes(clip.id)"
+                                    [class.dragging]="dragState?.clipIds?.includes(clip.id)"
                                     [style.left.px]="timeToPx(clip.startTime)"
                                     [style.width.px]="timeToPx(clip.duration)"
                                     (mousedown)="onClipMouseDown($event, clip)"
@@ -136,7 +136,7 @@ interface SelectionBox {
                         </div>
 
                         <!-- Selection Box -->
-                        @if (selectionBox) {
+                        @if (selectionBox()) {
                         <div
                             class="selection-box"
                             [style.left.px]="getSelectionBoxLeft()"

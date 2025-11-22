@@ -1,13 +1,7 @@
 import { Component, inject, signal, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { EditorStore } from '../../store/editor.store';
-import {
-    ExportService,
-    ExportProgress,
-    ExportFormat,
-    VideoCodec,
-    AudioCodec,
-} from '../../services/export.service';
+import { ExportService, ExportProgress, ExportFormat } from '../../services/export.service';
 
 type PresetType = 'youtube' | 'tiktok' | 'instagram' | 'custom';
 
@@ -72,49 +66,20 @@ type PresetType = 'youtube' | 'tiktok' | 'instagram' | 'custom';
                             />
                         </div>
 
-                        <!-- Formato y Codecs -->
-                        <div class="codec-grid">
-                            <div class="setting-group">
-                                <label>Formato</label>
-                                <select
-                                    [value]="format()"
-                                    (change)="onFormatChange($any($event.target).value)"
-                                    class="select-field"
-                                    [disabled]="selectedPreset() !== 'custom'"
-                                >
-                                    <option value="mp4">MP4 (H.264 + AAC)</option>
-                                    <option value="webm">WebM (VP9 + Opus)</option>
-                                    <option value="mov">MOV (H.264 + AAC)</option>
-                                </select>
-                            </div>
-
-                            <div class="setting-group">
-                                <label>Codec de Video</label>
-                                <select
-                                    [value]="videoCodec()"
-                                    (change)="onVideoCodecChange($any($event.target).value)"
-                                    class="select-field"
-                                    [disabled]="selectedPreset() !== 'custom'"
-                                >
-                                    <option value="h264">H.264 (Recomendado)</option>
-                                    <option value="h265">H.265/HEVC (Mejor compresión)</option>
-                                    <option value="vp9">VP9 (WebM)</option>
-                                </select>
-                            </div>
-
-                            <div class="setting-group">
-                                <label>Codec de Audio</label>
-                                <select
-                                    [value]="audioCodec()"
-                                    (change)="onAudioCodecChange($any($event.target).value)"
-                                    class="select-field"
-                                    [disabled]="selectedPreset() !== 'custom'"
-                                >
-                                    <option value="aac">AAC (Recomendado)</option>
-                                    <option value="opus">Opus (Alta calidad)</option>
-                                    <option value="mp3">MP3 (Compatible)</option>
-                                </select>
-                            </div>
+                        <!-- Formato -->
+                        <div class="setting-group">
+                            <label>Formato de Video</label>
+                            <select
+                                [value]="format()"
+                                (change)="onFormatChange($any($event.target).value)"
+                                class="select-field"
+                                [disabled]="selectedPreset() !== 'custom'"
+                            >
+                                <option value="mp4">MP4 (H.264)</option>
+                            </select>
+                            <small style="color: #999; font-size: 0.75rem; margin-top: 0.25rem;">
+                                Exportación profesional con FFmpeg del servidor
+                            </small>
                         </div>
 
                         <!-- Resolución -->
@@ -151,9 +116,8 @@ type PresetType = 'youtube' | 'tiktok' | 'instagram' | 'custom';
                                 class="select-field"
                                 [disabled]="selectedPreset() !== 'custom'"
                             >
-                                <option [value]="24">24 FPS (Cine)</option>
-                                <option [value]="30">30 FPS (Estándar)</option>
-                                <option [value]="60">60 FPS (Alta calidad)</option>
+                                <option [value]="24">24 FPS (Estándar/Cine)</option>
+                                <option [value]="48">48 FPS (Alta calidad)</option>
                             </select>
                         </div>
 
@@ -511,11 +475,9 @@ export class ExportDialogComponent {
     selectedPreset = signal<PresetType>('youtube');
     filename = signal('mi-video.mp4');
     format = signal<ExportFormat>('mp4');
-    videoCodec = signal<VideoCodec>('h264');
-    audioCodec = signal<AudioCodec>('aac');
     width = signal(1920);
     height = signal(1080);
-    fps = signal(30);
+    fps = signal(24);
 
     selectPreset(preset: PresetType) {
         this.selectedPreset.set(preset);
@@ -523,8 +485,6 @@ export class ExportDialogComponent {
         if (preset !== 'custom') {
             const options = this.exportService.getPresetOptions(preset);
             this.format.set(options.format);
-            this.videoCodec.set(options.videoCodec);
-            this.audioCodec.set(options.audioCodec);
             this.width.set(options.width);
             this.height.set(options.height);
             this.fps.set(options.fps);
@@ -554,8 +514,6 @@ export class ExportDialogComponent {
             // Configurar opciones de exportación
             const options = {
                 format: this.format(),
-                videoCodec: this.videoCodec(),
-                audioCodec: this.audioCodec(),
                 width: this.width(),
                 height: this.height(),
                 fps: this.fps(),
@@ -571,8 +529,16 @@ export class ExportDialogComponent {
 
             // Descargar video
             this.exportService.downloadVideo(videoBlob, this.filename());
+
+            // Esperar un momento para que el usuario vea el mensaje de éxito
+            setTimeout(() => {
+                this.isExporting.set(false);
+                this.closeDialog.emit();
+            }, 2000);
         } catch (error) {
             console.error('Export failed:', error);
+            // En caso de error, permitir que el usuario cierre el modal
+            this.isExporting.set(false);
         }
     }
 
@@ -586,21 +552,11 @@ export class ExportDialogComponent {
         this.format.set(value as ExportFormat);
     }
 
-    onVideoCodecChange(value: string) {
-        this.videoCodec.set(value as VideoCodec);
-    }
-
-    onAudioCodecChange(value: string) {
-        this.audioCodec.set(value as AudioCodec);
-    }
-
     getStageText(stage: ExportProgress['stage']): string {
         const stages = {
-            initializing: 'Inicializando...',
-            loading: 'Cargando FFmpeg...',
-            rendering: 'Renderizando frames de video...',
-            'extracting-audio': 'Extrayendo y mezclando audio...',
-            encoding: 'Codificando video final...',
+            preparing: 'Preparando proyecto...',
+            uploading: 'Enviando al servidor...',
+            processing: 'Procesando en servidor...',
             complete: 'Completado',
             error: 'Error',
         };
