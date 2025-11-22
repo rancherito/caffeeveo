@@ -14,6 +14,14 @@ import { EditorStore } from '../../store/editor.store';
 import { Clip, Track, AssetType } from '../../models/editor.models';
 import { NgIconComponent, provideIcons } from '@ng-icons/core';
 import { matFastRewind } from '@ng-icons/material-icons/baseline';
+import { StorageService } from '../../services/storage.service';
+
+interface SelectionBox {
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+}
 
 @Component({
     selector: 'timeline',
@@ -26,7 +34,7 @@ import { matFastRewind } from '@ng-icons/material-icons/baseline';
             <div class="toolbar">
                 <div class="zoom-controls">
                     <button (click)="zoomOut()">-</button>
-                    <span class="zoom-label">{{ zoomLevel() }} px/s</span>
+                    <span class="zoom-label">{{ zoomLevel() | number : '1.0-0' }} px/s</span>
                     <button (click)="zoomIn()">+</button>
                 </div>
                 <div class="track-controls">
@@ -103,8 +111,8 @@ import { matFastRewind } from '@ng-icons/material-icons/baseline';
                                 @for (clip of getClipsForTrack(track.id); track clip.id) {
                                 <div
                                     class="clip"
-                                    [class.selected]="store.selectedClipId() === clip.id"
-                                    [class.dragging]="dragState?.clipId === clip.id"
+                                    [class.selected]="isClipSelected(clip.id)"
+                                    [class.dragging]="dragState?.clipIds.includes(clip.id)"
                                     [style.left.px]="timeToPx(clip.startTime)"
                                     [style.width.px]="timeToPx(clip.duration)"
                                     (mousedown)="onClipMouseDown($event, clip)"
@@ -126,6 +134,17 @@ import { matFastRewind } from '@ng-icons/material-icons/baseline';
                             </div>
                             }
                         </div>
+
+                        <!-- Selection Box -->
+                        @if (selectionBox) {
+                        <div
+                            class="selection-box"
+                            [style.left.px]="getSelectionBoxLeft()"
+                            [style.top.px]="getSelectionBoxTop()"
+                            [style.width.px]="getSelectionBoxWidth()"
+                            [style.height.px]="getSelectionBoxHeight()"
+                        ></div>
+                        }
                     </div>
                 </div>
             </div>
@@ -138,6 +157,18 @@ import { matFastRewind } from '@ng-icons/material-icons/baseline';
                 [style.top.px]="contextMenu.y"
                 (click)="closeContextMenu()"
             >
+                @if (selectedClipIds().length > 1) {
+                <div class="menu-item" (click)="copySelectedClips()">
+                    Copy {{ selectedClipIds().length }} clips
+                </div>
+                <div class="menu-item" (click)="duplicateSelectedClips()">
+                    Duplicate {{ selectedClipIds().length }} clips
+                </div>
+                <div class="menu-item delete" (click)="deleteSelectedClips()">
+                    Delete {{ selectedClipIds().length }} clips
+                </div>
+                } @else {
+                <div class="menu-item" (click)="copyClip(contextMenu.clipId)">Copy</div>
                 <div class="menu-item" (click)="duplicateClip(contextMenu.clipId)">Duplicate</div>
                 @if (isVideoClip(contextMenu.clipId)) {
                 <div class="menu-item" (click)="reverseClip(contextMenu.clipId)">
@@ -145,6 +176,12 @@ import { matFastRewind } from '@ng-icons/material-icons/baseline';
                 </div>
                 }
                 <div class="menu-item delete" (click)="deleteClip(contextMenu.clipId)">Delete</div>
+                } @if (clipboard().length > 0) {
+                <div class="menu-divider"></div>
+                <div class="menu-item" (click)="pasteClips()">
+                    Paste {{ clipboard().length }} clip{{ clipboard().length > 1 ? 's' : '' }}
+                </div>
+                }
             </div>
             }
 
@@ -406,7 +443,7 @@ import { matFastRewind } from '@ng-icons/material-icons/baseline';
                 border-color: var(--accent);
                 background: #264f78;
                 z-index: 2;
-                box-shadow: 0 0 0 1px var(--accent);
+                box-shadow: 0 0 0 2px var(--accent);
             }
 
             .clip.dragging {
@@ -453,17 +490,41 @@ import { matFastRewind } from '@ng-icons/material-icons/baseline';
                 z-index: 999;
                 background: transparent;
             }
+
+            .selection-box {
+                position: absolute;
+                border: 2px dashed var(--accent);
+                background: rgba(0, 122, 204, 0.1);
+                pointer-events: none;
+                z-index: 50;
+            }
+
+            .menu-divider {
+                height: 1px;
+                background: #454545;
+                margin: 4px 0;
+            }
         `,
     ],
 })
 export class TimelineComponent {
     store = inject(EditorStore);
+    private storage = inject(StorageService);
 
     // Signals
-    zoomLevel = signal<number>(50); // Start with a reasonable zoom
+    zoomLevel = signal<number>(this.storage.loadState<number>('timeline-zoom') || 50);
     scrollLeft = signal<number>(0);
+    selectedClipIds = signal<string[]>([]); // Multi-selection
+    clipboard = signal<Clip[]>([]); // For copy/paste
+    selectionBox = signal<SelectionBox | null>(null);
 
     @ViewChild('scrollContainer') scrollContainer!: ElementRef<HTMLDivElement>;
+
+    constructor() {
+        effect(() => {
+            this.storage.saveState('timeline-zoom', this.zoomLevel());
+        });
+    }
 
     // Computed
     totalWidth = computed(() => {
@@ -500,10 +561,10 @@ export class TimelineComponent {
     });
 
     dragState: {
-        clipId: string;
+        clipIds: string[];
         startX: number;
-        startStartTime: number;
-        startTrackId: string;
+        startY: number;
+        initialPositions: Map<string, { startTime: number; trackId: string }>;
     } | null = null;
 
     contextMenu: {
@@ -511,6 +572,8 @@ export class TimelineComponent {
         y: number;
         clipId: string;
     } | null = null;
+
+    private lastSelectedClipId: string | null = null;
 
     // Methods
     getClipsForTrack(trackId: string): Clip[] {
@@ -541,12 +604,25 @@ export class TimelineComponent {
         // Only handle if not dragging and not clicking a clip
         if (this.dragState) return;
 
-        const rect = this.scrollContainer.nativeElement.getBoundingClientRect();
-        // Calculation: (Click X relative to viewport) - (Container Left) + (Scroll Amount)
-        // We subtract sidebar width if the click is on the sidebar? No, the click listener is on scroll-area.
-        // But wait, the sidebar is a sibling of scroll-area.
-        // So scroll-area starts AFTER sidebar.
+        // Start selection box if shift is held
+        if (event.shiftKey && !event.ctrlKey && !event.metaKey) {
+            const rect = this.scrollContainer.nativeElement.getBoundingClientRect();
+            this.selectionBox.set({
+                startX: event.clientX,
+                startY: event.clientY,
+                currentX: event.clientX,
+                currentY: event.clientY,
+            });
+            return;
+        }
 
+        // Clear selection if clicking on empty space
+        if (!event.ctrlKey && !event.metaKey) {
+            this.selectedClipIds.set([]);
+            this.lastSelectedClipId = null;
+        }
+
+        const rect = this.scrollContainer.nativeElement.getBoundingClientRect();
         const clickX = event.clientX - rect.left + this.scrollContainer.nativeElement.scrollLeft;
         const time = Math.max(0, this.pxToTime(clickX));
         this.store.setCurrentTime(time);
@@ -560,20 +636,96 @@ export class TimelineComponent {
         this.store.setCurrentTime(time);
     }
 
+    private isDragOperation = false;
+    private handledSelectionInMouseDown = false;
+
     selectClip(event: MouseEvent, clip: Clip) {
         event.stopPropagation();
+
+        // If we dragged, don't change selection
+        if (this.isDragOperation) return;
+
+        // If we already handled selection in mousedown (e.g. clicking unselected clip), don't do anything
+        if (this.handledSelectionInMouseDown) return;
+
+        // Handle clicking on an ALREADY selected clip
+        if (event.ctrlKey || event.metaKey) {
+            // Ctrl/Cmd + Click: Toggle selection (Deselect)
+            this.toggleClipSelection(clip.id);
+        } else if (event.shiftKey && this.lastSelectedClipId) {
+            // Shift + Click: Select range
+            this.selectClipRange(this.lastSelectedClipId, clip.id);
+        } else {
+            // Normal click on selected clip: Select ONLY this clip (deselect others)
+            this.selectedClipIds.set([clip.id]);
+            this.lastSelectedClipId = clip.id;
+        }
+
+        // Update store's selected clip (for preview)
         this.store.selectClip(clip.id);
+    }
+
+    toggleClipSelection(clipId: string) {
+        const current = this.selectedClipIds();
+        if (current.includes(clipId)) {
+            this.selectedClipIds.set(current.filter((id) => id !== clipId));
+        } else {
+            this.selectedClipIds.set([...current, clipId]);
+            this.lastSelectedClipId = clipId;
+        }
+    }
+
+    selectClipRange(startClipId: string, endClipId: string) {
+        const clips = this.store.clips();
+        const startIndex = clips.findIndex((c) => c.id === startClipId);
+        const endIndex = clips.findIndex((c) => c.id === endClipId);
+
+        if (startIndex === -1 || endIndex === -1) return;
+
+        const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+        const rangeClipIds = clips.slice(from, to + 1).map((c) => c.id);
+
+        this.selectedClipIds.set(rangeClipIds);
+    }
+
+    isClipSelected(clipId: string): boolean {
+        return this.selectedClipIds().includes(clipId);
     }
 
     onClipMouseDown(event: MouseEvent, clip: Clip) {
         event.preventDefault();
         event.stopPropagation();
 
+        this.isDragOperation = false;
+        this.handledSelectionInMouseDown = false;
+
+        // If clicking on an unselected clip, select it first (so we can drag it immediately)
+        if (!this.isClipSelected(clip.id)) {
+            this.handledSelectionInMouseDown = true;
+            if (event.ctrlKey || event.metaKey) {
+                this.toggleClipSelection(clip.id);
+            } else if (event.shiftKey && this.lastSelectedClipId) {
+                this.selectClipRange(this.lastSelectedClipId, clip.id);
+            } else {
+                this.selectedClipIds.set([clip.id]);
+                this.lastSelectedClipId = clip.id;
+            }
+        }
+
+        // Prepare drag state for all selected clips
+        const selectedIds = this.selectedClipIds();
+        const clipsToMove = this.store.clips().filter((c) => selectedIds.includes(c.id));
+        const initialPositions = new Map<string, { startTime: number; trackId: string }>();
+
+        clipsToMove.forEach((c) => {
+            initialPositions.set(c.id, { startTime: c.startTime, trackId: c.trackId });
+        });
+
         this.dragState = {
-            clipId: clip.id,
+            clipIds: selectedIds,
             startX: event.clientX,
-            startStartTime: clip.startTime,
-            startTrackId: clip.trackId,
+            startY: event.clientY,
+            initialPositions,
         };
 
         this.store.selectClip(clip.id);
@@ -582,6 +734,13 @@ export class TimelineComponent {
     onClipContextMenu(event: MouseEvent, clip: Clip) {
         event.preventDefault();
         event.stopPropagation();
+
+        // Ensure the right-clicked clip is selected
+        if (!this.isClipSelected(clip.id)) {
+            this.selectedClipIds.set([clip.id]);
+            this.lastSelectedClipId = clip.id;
+        }
+
         this.contextMenu = {
             x: event.clientX,
             y: event.clientY,
@@ -591,46 +750,139 @@ export class TimelineComponent {
 
     @HostListener('document:mousemove', ['$event'])
     onMouseMove(event: MouseEvent) {
+        // Handle selection box
+        if (this.selectionBox()) {
+            this.selectionBox.update((box) => {
+                if (!box) return null;
+                return { ...box, currentX: event.clientX, currentY: event.clientY };
+            });
+            this.updateSelectionBoxClips();
+            return;
+        }
+
+        // Handle clip dragging
         if (!this.dragState) return;
+
+        // Check if we are actually dragging (moved more than threshold)
+        if (!this.isDragOperation) {
+            const moveX = Math.abs(event.clientX - this.dragState.startX);
+            const moveY = Math.abs(event.clientY - this.dragState.startY);
+            if (moveX > 3 || moveY > 3) {
+                this.isDragOperation = true;
+            } else {
+                return; // Don't move yet
+            }
+        }
 
         const deltaX = event.clientX - this.dragState.startX;
         const deltaTime = this.pxToTime(deltaX);
-        let newStartTime = Math.max(0, this.dragState.startStartTime + deltaTime);
 
-        // Snapping Logic
+        // Calculate track change
+        const deltaY = event.clientY - this.dragState.startY;
+        const trackHeight = 60; // Should match CSS --track-height
+        const trackDelta = Math.round(deltaY / trackHeight);
+
+        // Snapping Logic (only for the first clip)
         const SNAP_THRESHOLD_PX = 10;
         const snapThreshold = this.pxToTime(SNAP_THRESHOLD_PX);
+        const firstClipId = this.dragState.clipIds[0];
+        const firstClipInitial = this.dragState.initialPositions.get(firstClipId)!;
+        let baseNewStartTime = Math.max(0, firstClipInitial.startTime + deltaTime);
 
-        const otherClips = this.store.clips().filter((c) => c.id !== this.dragState!.clipId);
+        const otherClips = this.store
+            .clips()
+            .filter((c) => !this.dragState!.clipIds.includes(c.id));
         let snapped = false;
 
         // Snap to Playhead
-        if (Math.abs(newStartTime - this.store.currentTime()) < snapThreshold) {
-            newStartTime = this.store.currentTime();
+        if (Math.abs(baseNewStartTime - this.store.currentTime()) < snapThreshold) {
+            baseNewStartTime = this.store.currentTime();
             snapped = true;
         }
 
         if (!snapped) {
             for (const other of otherClips) {
                 // Snap to end of other clip
-                if (Math.abs(newStartTime - (other.startTime + other.duration)) < snapThreshold) {
-                    newStartTime = other.startTime + other.duration;
+                if (
+                    Math.abs(baseNewStartTime - (other.startTime + other.duration)) < snapThreshold
+                ) {
+                    baseNewStartTime = other.startTime + other.duration;
                     break;
                 }
                 // Snap to start of other clip
-                if (Math.abs(newStartTime - other.startTime) < snapThreshold) {
-                    newStartTime = other.startTime;
+                if (Math.abs(baseNewStartTime - other.startTime) < snapThreshold) {
+                    baseNewStartTime = other.startTime;
                     break;
                 }
             }
         }
 
-        this.store.updateClip(this.dragState.clipId, { startTime: newStartTime });
+        // Calculate the actual delta to apply
+        const actualDeltaTime = baseNewStartTime - firstClipInitial.startTime;
+
+        // Update all selected clips
+        const tracks = this.store.tracks();
+        this.dragState.clipIds.forEach((clipId) => {
+            const initial = this.dragState!.initialPositions.get(clipId)!;
+            const newStartTime = Math.max(0, initial.startTime + actualDeltaTime);
+
+            // Calculate new track
+            const currentTrackIndex = tracks.findIndex((t) => t.id === initial.trackId);
+            const newTrackIndex = Math.max(
+                0,
+                Math.min(tracks.length - 1, currentTrackIndex + trackDelta)
+            );
+            const newTrackId = tracks[newTrackIndex]?.id || initial.trackId;
+
+            this.store.updateClip(clipId, { startTime: newStartTime, trackId: newTrackId });
+        });
     }
 
     @HostListener('document:mouseup')
     onMouseUp() {
         this.dragState = null;
+        if (this.selectionBox()) {
+            this.selectionBox.set(null);
+        }
+    }
+
+    @HostListener('document:keydown', ['$event'])
+    onKeyDown(event: KeyboardEvent) {
+        // Ctrl/Cmd + A: Select all clips
+        if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
+            event.preventDefault();
+            this.selectAllClips();
+        }
+
+        // Ctrl/Cmd + C: Copy selected clips
+        if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
+            event.preventDefault();
+            this.copySelectedClips();
+        }
+
+        // Ctrl/Cmd + V: Paste clips
+        if ((event.ctrlKey || event.metaKey) && event.key === 'v') {
+            event.preventDefault();
+            this.pasteClips();
+        }
+
+        // Ctrl/Cmd + D: Duplicate selected clips
+        if ((event.ctrlKey || event.metaKey) && event.key === 'd') {
+            event.preventDefault();
+            this.duplicateSelectedClips();
+        }
+
+        // Delete or Backspace: Delete selected clips
+        if (event.key === 'Delete' || event.key === 'Backspace') {
+            event.preventDefault();
+            this.deleteSelectedClips();
+        }
+
+        // Escape: Clear selection
+        if (event.key === 'Escape') {
+            this.selectedClipIds.set([]);
+            this.lastSelectedClipId = null;
+        }
     }
 
     onTrackDragOver(event: DragEvent, track: Track) {
@@ -668,6 +920,153 @@ export class TimelineComponent {
     duplicateClip(clipId: string) {
         this.store.duplicateClip(clipId);
         this.closeContextMenu();
+    }
+
+    duplicateSelectedClips() {
+        const selectedIds = this.selectedClipIds();
+        if (selectedIds.length === 0) return;
+
+        const clips = this.store.clips().filter((c) => selectedIds.includes(c.id));
+        const minStartTime = Math.min(...clips.map((c) => c.startTime));
+        const maxEndTime = Math.max(...clips.map((c) => c.startTime + c.duration));
+        const offset = maxEndTime - minStartTime;
+
+        const newClipIds: string[] = [];
+
+        clips.forEach((clip) => {
+            const newClip: Clip = {
+                ...clip,
+                id: crypto.randomUUID(),
+                startTime: clip.startTime + offset,
+                name: `${clip.name} (Copy)`,
+            };
+            this.store.clips.update((clips) => [...clips, newClip]);
+            newClipIds.push(newClip.id);
+        });
+
+        // Select the new clips
+        this.selectedClipIds.set(newClipIds);
+        this.closeContextMenu();
+    }
+
+    copyClip(clipId: string) {
+        const clip = this.store.clips().find((c) => c.id === clipId);
+        if (clip) {
+            this.clipboard.set([clip]);
+        }
+        this.closeContextMenu();
+    }
+
+    copySelectedClips() {
+        const selectedIds = this.selectedClipIds();
+        const clips = this.store.clips().filter((c) => selectedIds.includes(c.id));
+        this.clipboard.set(clips);
+        this.closeContextMenu();
+    }
+
+    pasteClips() {
+        const clipsToPaste = this.clipboard();
+        if (clipsToPaste.length === 0) return;
+
+        // Calculate offset to paste at current time
+        const minStartTime = Math.min(...clipsToPaste.map((c) => c.startTime));
+        const offset = this.store.currentTime() - minStartTime;
+
+        const newClipIds: string[] = [];
+
+        clipsToPaste.forEach((clip) => {
+            const newClip: Clip = {
+                ...clip,
+                id: crypto.randomUUID(),
+                startTime: clip.startTime + offset,
+                name: clip.name.replace(' (Copy)', '') + ' (Copy)',
+            };
+            this.store.clips.update((clips) => [...clips, newClip]);
+            newClipIds.push(newClip.id);
+        });
+
+        // Select the pasted clips
+        this.selectedClipIds.set(newClipIds);
+        this.closeContextMenu();
+    }
+
+    deleteSelectedClips() {
+        const selectedIds = this.selectedClipIds();
+        selectedIds.forEach((id) => this.store.removeClip(id));
+        this.selectedClipIds.set([]);
+        this.lastSelectedClipId = null;
+        this.closeContextMenu();
+    }
+
+    selectAllClips() {
+        const allClipIds = this.store.clips().map((c) => c.id);
+        this.selectedClipIds.set(allClipIds);
+    }
+
+    updateSelectionBoxClips() {
+        const box = this.selectionBox();
+        if (!box) return;
+
+        const rect = this.scrollContainer.nativeElement.getBoundingClientRect();
+        const scrollLeft = this.scrollContainer.nativeElement.scrollLeft;
+        const scrollTop = this.scrollContainer.nativeElement.scrollTop;
+
+        const boxLeft = Math.min(box.startX, box.currentX) - rect.left + scrollLeft;
+        const boxRight = Math.max(box.startX, box.currentX) - rect.left + scrollLeft;
+        const boxTop = Math.min(box.startY, box.currentY) - rect.top + scrollTop;
+        const boxBottom = Math.max(box.startY, box.currentY) - rect.top + scrollTop;
+
+        const selectedIds: string[] = [];
+        const trackHeight = 60;
+        const rulerHeight = 30;
+
+        this.store.clips().forEach((clip) => {
+            const clipLeft = this.timeToPx(clip.startTime);
+            const clipRight = this.timeToPx(clip.startTime + clip.duration);
+
+            // Find track index
+            const trackIndex = this.store.tracks().findIndex((t) => t.id === clip.trackId);
+            const clipTop = rulerHeight + trackIndex * trackHeight;
+            const clipBottom = clipTop + trackHeight;
+
+            // Check if clip intersects with selection box
+            if (
+                clipRight >= boxLeft &&
+                clipLeft <= boxRight &&
+                clipBottom >= boxTop &&
+                clipTop <= boxBottom
+            ) {
+                selectedIds.push(clip.id);
+            }
+        });
+
+        this.selectedClipIds.set(selectedIds);
+    }
+
+    getSelectionBoxLeft(): number {
+        const box = this.selectionBox();
+        if (!box) return 0;
+        const rect = this.scrollContainer.nativeElement.getBoundingClientRect();
+        return Math.min(box.startX, box.currentX) - rect.left;
+    }
+
+    getSelectionBoxTop(): number {
+        const box = this.selectionBox();
+        if (!box) return 0;
+        const rect = this.scrollContainer.nativeElement.getBoundingClientRect();
+        return Math.min(box.startY, box.currentY) - rect.top;
+    }
+
+    getSelectionBoxWidth(): number {
+        const box = this.selectionBox();
+        if (!box) return 0;
+        return Math.abs(box.currentX - box.startX);
+    }
+
+    getSelectionBoxHeight(): number {
+        const box = this.selectionBox();
+        if (!box) return 0;
+        return Math.abs(box.currentY - box.startY);
     }
 
     reverseClip(clipId: string) {
