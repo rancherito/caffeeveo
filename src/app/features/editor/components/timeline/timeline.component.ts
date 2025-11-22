@@ -12,11 +12,14 @@ import {
 import { CommonModule } from '@angular/common';
 import { EditorStore } from '../../store/editor.store';
 import { Clip, Track, AssetType } from '../../models/editor.models';
+import { NgIconComponent, provideIcons } from '@ng-icons/core';
+import { matFastRewind } from '@ng-icons/material-icons/baseline';
 
 @Component({
     selector: 'timeline',
     standalone: true,
-    imports: [CommonModule],
+    imports: [CommonModule, NgIconComponent],
+    viewProviders: [provideIcons({ matFastRewind })],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <div class="timeline-container">
@@ -106,8 +109,18 @@ import { Clip, Track, AssetType } from '../../models/editor.models';
                                     [style.width.px]="timeToPx(clip.duration)"
                                     (mousedown)="onClipMouseDown($event, clip)"
                                     (click)="selectClip($event, clip)"
+                                    (contextmenu)="onClipContextMenu($event, clip)"
                                 >
                                     <span class="clip-name">{{ clip.name }}</span>
+                                    <div class="clip-icons">
+                                        @if (clip.isReversed) {
+                                        <ng-icon
+                                            name="matFastRewind"
+                                            class="icon reverse-icon"
+                                            title="Reversed"
+                                        ></ng-icon>
+                                        }
+                                    </div>
                                 </div>
                                 }
                             </div>
@@ -116,6 +129,29 @@ import { Clip, Track, AssetType } from '../../models/editor.models';
                     </div>
                 </div>
             </div>
+
+            <!-- Context Menu -->
+            @if (contextMenu) {
+            <div
+                class="context-menu"
+                [style.left.px]="contextMenu.x"
+                [style.top.px]="contextMenu.y"
+                (click)="closeContextMenu()"
+            >
+                <div class="menu-item" (click)="duplicateClip(contextMenu.clipId)">Duplicate</div>
+                @if (isVideoClip(contextMenu.clipId)) {
+                <div class="menu-item" (click)="reverseClip(contextMenu.clipId)">
+                    {{ isClipReversed(contextMenu.clipId) ? 'Normal Speed' : 'Reverse Speed' }}
+                </div>
+                }
+                <div class="menu-item delete" (click)="deleteClip(contextMenu.clipId)">Delete</div>
+            </div>
+            }
+
+            <!-- Overlay to close menu -->
+            @if (contextMenu) {
+            <div class="menu-overlay" (click)="closeContextMenu()"></div>
+            }
         </div>
     `,
     styles: [
@@ -221,7 +257,34 @@ import { Clip, Track, AssetType } from '../../models/editor.models';
                 flex: 1;
                 overflow: auto;
                 position: relative;
+                overflow: auto;
+                position: relative;
                 background: var(--bg-dark);
+            }
+
+            .timeline-scroll-area::-webkit-scrollbar {
+                width: 10px;
+                height: 10px;
+            }
+
+            .timeline-scroll-area::-webkit-scrollbar-track {
+                background: #1e1e1e;
+                border-left: 1px solid #333;
+                border-top: 1px solid #333;
+            }
+
+            .timeline-scroll-area::-webkit-scrollbar-thumb {
+                background: #444;
+                border-radius: 5px;
+                border: 2px solid #1e1e1e;
+            }
+
+            .timeline-scroll-area::-webkit-scrollbar-thumb:hover {
+                background: #555;
+            }
+
+            .timeline-scroll-area::-webkit-scrollbar-corner {
+                background: #1e1e1e;
             }
 
             .timeline-content-wrapper {
@@ -318,6 +381,27 @@ import { Clip, Track, AssetType } from '../../models/editor.models';
                 transition: box-shadow 0.1s, transform 0.1s;
             }
 
+            .clip-icons {
+                position: absolute;
+                right: 4px;
+                top: 50%;
+                transform: translateY(-50%);
+                display: flex;
+                gap: 4px;
+                pointer-events: none;
+            }
+
+            .icon {
+                font-size: 14px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .reverse-icon {
+                color: #ffcc00;
+            }
+
             .clip.selected {
                 border-color: var(--accent);
                 background: #264f78;
@@ -331,6 +415,43 @@ import { Clip, Track, AssetType } from '../../models/editor.models';
                 z-index: 100;
                 box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
                 transform: scale(1.02);
+            }
+
+            .context-menu {
+                position: fixed;
+                background: #252526;
+                border: 1px solid #454545;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+                border-radius: 4px;
+                padding: 4px 0;
+                z-index: 1000;
+                min-width: 150px;
+            }
+
+            .menu-item {
+                padding: 8px 16px;
+                cursor: pointer;
+                font-size: 12px;
+                color: #ccc;
+            }
+
+            .menu-item:hover {
+                background: #094771;
+                color: white;
+            }
+
+            .menu-item.delete {
+                color: #ff4d4d;
+            }
+
+            .menu-overlay {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 999;
+                background: transparent;
             }
         `,
     ],
@@ -383,6 +504,12 @@ export class TimelineComponent {
         startX: number;
         startStartTime: number;
         startTrackId: string;
+    } | null = null;
+
+    contextMenu: {
+        x: number;
+        y: number;
+        clipId: string;
     } | null = null;
 
     // Methods
@@ -450,6 +577,16 @@ export class TimelineComponent {
         };
 
         this.store.selectClip(clip.id);
+    }
+
+    onClipContextMenu(event: MouseEvent, clip: Clip) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.contextMenu = {
+            x: event.clientX,
+            y: event.clientY,
+            clipId: clip.id,
+        };
     }
 
     @HostListener('document:mousemove', ['$event'])
@@ -522,5 +659,34 @@ export class TimelineComponent {
 
     toggleLock(track: Track) {
         // Implement in store
+    }
+
+    closeContextMenu() {
+        this.contextMenu = null;
+    }
+
+    duplicateClip(clipId: string) {
+        this.store.duplicateClip(clipId);
+        this.closeContextMenu();
+    }
+
+    reverseClip(clipId: string) {
+        this.store.reverseClip(clipId);
+        this.closeContextMenu();
+    }
+
+    deleteClip(clipId: string) {
+        this.store.removeClip(clipId);
+        this.closeContextMenu();
+    }
+
+    isVideoClip(clipId: string): boolean {
+        const clip = this.store.clips().find((c) => c.id === clipId);
+        return clip?.type === 'video';
+    }
+
+    isClipReversed(clipId: string): boolean {
+        const clip = this.store.clips().find((c) => c.id === clipId);
+        return !!clip?.isReversed;
     }
 }

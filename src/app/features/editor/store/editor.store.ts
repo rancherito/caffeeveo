@@ -306,6 +306,28 @@ export class EditorStore {
         );
     }
 
+    duplicateClip(clipId: string) {
+        const clip = this.clips().find((c) => c.id === clipId);
+        if (!clip) return;
+
+        const newClip: Clip = {
+            ...clip,
+            id: crypto.randomUUID(),
+            startTime: clip.startTime + clip.duration, // Place right after
+            name: `${clip.name} (Copy)`,
+        };
+
+        // Check for collision and shift if needed (simple version)
+        // Ideally we should find the next available slot
+        this.clips.update((clips) => [...clips, newClip]);
+    }
+
+    reverseClip(clipId: string) {
+        this.updateClip(clipId, {
+            isReversed: !this.clips().find((c) => c.id === clipId)?.isReversed,
+        });
+    }
+
     setCurrentTime(time: number) {
         this.currentTime.set(time);
     }

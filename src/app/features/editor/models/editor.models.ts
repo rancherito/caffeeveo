@@ -33,6 +33,7 @@ export interface Clip {
     opacity?: number;
     x?: number;
     y?: number;
+    isReversed?: boolean;
 }
 
 export interface Track {

@@ -263,7 +263,58 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
 
         if (clip.type === 'video' && asset.frames && asset.frames.length > 0) {
             const frameRate = asset.frameRate || 30;
-            const frameIndex = Math.floor(clipTime * frameRate);
+            let frameIndex = Math.floor(clipTime * frameRate);
+
+            // Handle Reverse
+            if (clip.isReversed) {
+                const totalAssetFrames = asset.frames.length;
+                // Calculate reversed index relative to the clip duration
+                // But actually, we just want to play the asset backwards from the end?
+                // Or play the segment backwards?
+                // Usually "Reverse" means playing the asset backwards.
+                // If offset is 0, we start at end of asset and go back.
+                // But clip might be a slice.
+                // Let's assume we map clipTime (0..duration) to (duration..0)
+
+                // Simpler approach: Map the current clipTime to the reversed time in the asset
+                // If normal: assetTime = offset + clipTime
+                // If reversed: assetTime = (offset + duration) - clipTime ?
+                // No, that shifts the window.
+                // If I reverse a clip that shows 0-5s of a 10s video.
+                // It should show 5s-0s.
+                // So effective time in asset = (clip.offset + clip.duration) - (time - clip.startTime)
+                // Wait, clipTime IS (time - clip.startTime).
+                // So effective time = clip.offset + clip.duration - clipTime.
+                // Let's verify.
+                // Start of clip (clipTime=0) -> offset + duration.
+                // End of clip (clipTime=duration) -> offset.
+                // This seems correct for reversing the SEGMENT defined by the clip.
+
+                // However, if the user just wants to reverse the playback direction of the underlying asset...
+                // Usually NLEs reverse the *segment*.
+
+                const effectiveClipTime = clip.duration - clipTime;
+                const assetTime = clip.offset + effectiveClipTime;
+                frameIndex = Math.floor(assetTime * frameRate);
+            } else {
+                // Normal: assetTime = clip.offset + clipTime (already calculated implicitly if we consider clipTime includes offset? No, clipTime here is relative to clip start)
+                // Wait, line 262: const clipTime = time - clip.startTime + (clip.offset || 0);
+                // This `clipTime` variable ALREADY includes the offset. It is effectively `assetTime`.
+                // So for reverse:
+                // We need `localTime` = time - clip.startTime;
+                // `assetTime` = clip.offset + (clip.duration - localTime);
+                // Let's recalculate to be clear.
+            }
+
+            // Redoing calculation for clarity
+            const localTime = time - clip.startTime;
+            let assetTime = (clip.offset || 0) + localTime;
+
+            if (clip.isReversed) {
+                assetTime = (clip.offset || 0) + clip.duration - localTime;
+            }
+
+            frameIndex = Math.floor(assetTime * frameRate);
             const clampedIndex = Math.max(0, Math.min(frameIndex, asset.frames.length - 1));
 
             this.currentFrame.set(clampedIndex);
