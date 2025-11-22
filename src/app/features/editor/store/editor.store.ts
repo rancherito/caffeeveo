@@ -1,5 +1,6 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, signal, computed, effect, inject } from '@angular/core';
 import { Asset, Clip, Track, AssetType } from '../models/editor.models';
+import { StorageService } from '../services/storage.service';
 
 @Injectable({
     providedIn: 'root',
@@ -19,6 +20,40 @@ export class EditorStore {
         width: 1080,
         height: 1920,
     });
+    readonly isLoaded = signal<boolean>(false);
+
+    private storage = inject(StorageService);
+
+    constructor() {
+        this.loadProject();
+
+        effect(() => {
+            if (!this.isLoaded()) return;
+
+            const assets = this.assets();
+            const sanitizedAssets = assets.map((a) => {
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                const { frames, url, ...rest } = a;
+                return { ...rest, url: '' };
+            });
+            this.storage.saveState('editor-assets', sanitizedAssets);
+        });
+
+        effect(() => {
+            if (!this.isLoaded()) return;
+            this.storage.saveState('editor-tracks', this.tracks());
+        });
+
+        effect(() => {
+            if (!this.isLoaded()) return;
+            this.storage.saveState('editor-clips', this.clips());
+        });
+
+        effect(() => {
+            if (!this.isLoaded()) return;
+            this.storage.saveState('editor-settings', this.projectSettings());
+        });
+    }
 
     // Computed
     readonly selectedClip = computed(
@@ -32,12 +67,65 @@ export class EditorStore {
     });
 
     // Actions
+    async loadProject() {
+        try {
+            // Load Settings
+            const settings = this.storage.loadState<{ width: number; height: number }>(
+                'editor-settings'
+            );
+            if (settings) this.projectSettings.set(settings);
+
+            // Load Tracks
+            const tracks = this.storage.loadState<Track[]>('editor-tracks');
+            if (tracks) this.tracks.set(tracks);
+
+            // Load Clips
+            const clips = this.storage.loadState<Clip[]>('editor-clips');
+            if (clips) this.clips.set(clips);
+
+            // Load Assets
+            const savedAssets = this.storage.loadState<Asset[]>('editor-assets');
+            if (savedAssets) {
+                const restoredAssets: Asset[] = [];
+                for (const asset of savedAssets) {
+                    try {
+                        const blob = await this.storage.getFile(asset.id);
+                        if (blob) {
+                            const url = URL.createObjectURL(blob);
+                            restoredAssets.push({ ...asset, url, frames: [] });
+                        } else {
+                            console.warn(`Could not find file for asset ${asset.id}`);
+                        }
+                    } catch (e) {
+                        console.error(`Error loading asset ${asset.id}`, e);
+                    }
+                }
+                this.assets.set(restoredAssets);
+
+                // Restart frame extraction for videos after setting the state
+                restoredAssets.forEach((asset) => {
+                    if (asset.type === 'video') {
+                        this.extractFrames(asset.id);
+                    }
+                });
+            }
+        } catch (e) {
+            console.error('Error loading project:', e);
+        } finally {
+            this.isLoaded.set(true);
+        }
+    }
+
     async addAsset(file: File, type: AssetType) {
         const url = URL.createObjectURL(file);
 
         if (type === 'video') {
             // Extraer metadatos primero
             const metadata = await this.extractVideoMetadata(file, url);
+
+            // Guardar archivo en IndexedDB
+            await this.storage.storeFile(metadata.id, file);
+
             this.assets.update((assets) => [...assets, metadata]);
 
             // Extraer frames en background
@@ -51,6 +139,7 @@ export class EditorStore {
                 duration: 5,
                 size: file.size,
             };
+            await this.storage.storeFile(asset.id, file);
             this.assets.update((assets) => [...assets, asset]);
         } else if (type === 'audio') {
             const audio = document.createElement('audio');
@@ -64,7 +153,9 @@ export class EditorStore {
                     duration: audio.duration,
                     size: file.size,
                 };
-                this.assets.update((assets) => [...assets, asset]);
+                this.storage.storeFile(asset.id, file).then(() => {
+                    this.assets.update((assets) => [...assets, asset]);
+                });
             };
             audio.src = url;
         }
