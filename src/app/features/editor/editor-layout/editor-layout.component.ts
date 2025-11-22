@@ -5,23 +5,18 @@ import { PreviewPlayerComponent } from '../components/preview-player/preview-pla
 import { TimelineComponent } from '../components/timeline/timeline.component';
 
 @Component({
-    selector: 'app-editor-layout',
+    selector: 'editor-layout',
     standalone: true,
-    imports: [
-        CommonModule,
-        AssetLibraryComponent,
-        PreviewPlayerComponent,
-        TimelineComponent
-    ],
+    imports: [CommonModule, AssetLibraryComponent, PreviewPlayerComponent, TimelineComponent],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
         <div class="editor-layout">
             <div class="top-section">
                 <div class="sidebar">
-                    <app-asset-library></app-asset-library>
+                    <asset-library></asset-library>
                 </div>
                 <div class="main-preview">
-                    <app-preview-player></app-preview-player>
+                    <preview-player></preview-player>
                 </div>
                 <div class="properties-panel">
                     <!-- Placeholder for properties -->
@@ -29,43 +24,44 @@ import { TimelineComponent } from '../components/timeline/timeline.component';
                 </div>
             </div>
             <div class="bottom-section">
-                <app-timeline></app-timeline>
+                <timeline></timeline>
             </div>
         </div>
     `,
-    styles: [`
-        .editor-layout {
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            width: 100vw;
-            overflow: hidden;
-            background: #121212;
-        }
-        .top-section {
-            flex: 1;
-            display: flex;
-            min-height: 0; /* Important for nested flex scrolling */
-        }
-        .sidebar {
-            width: 300px;
-            min-width: 200px;
-        }
-        .main-preview {
-            flex: 1;
-            padding: 1rem;
-            display: flex;
-            flex-direction: column;
-        }
-        .properties-panel {
-            width: 250px;
-            border-left: 1px solid #333;
-            background: #1e1e1e;
-        }
-        .bottom-section {
-            height: 300px;
-            min-height: 200px;
-        }
-    `]
+    styles: [
+        `
+            .editor-layout {
+                display: flex;
+                flex-direction: column;
+                height: 100vh;
+                width: 100vw;
+                overflow: hidden;
+                background: #121212;
+            }
+            .top-section {
+                flex: 1;
+                display: flex;
+                min-height: 0; /* Important for nested flex scrolling */
+            }
+            .sidebar {
+                width: 300px;
+                min-width: 200px;
+            }
+            .main-preview {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+            }
+            .properties-panel {
+                width: 250px;
+                border-left: 1px solid #333;
+                background: #1e1e1e;
+            }
+            .bottom-section {
+                height: 300px;
+                min-height: 200px;
+            }
+        `,
+    ],
 })
 export class EditorLayoutComponent {}

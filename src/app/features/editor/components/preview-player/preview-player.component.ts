@@ -1,107 +1,122 @@
-import { Component, inject, effect, ElementRef, viewChild, OnDestroy, PLATFORM_ID, ChangeDetectionStrategy, AfterViewInit, ChangeDetectorRef, computed, signal } from '@angular/core';
+import {
+    Component,
+    inject,
+    effect,
+    ElementRef,
+    viewChild,
+    OnDestroy,
+    PLATFORM_ID,
+    ChangeDetectionStrategy,
+    AfterViewInit,
+    ChangeDetectorRef,
+    computed,
+    signal,
+} from '@angular/core';
 import { CommonModule, isPlatformBrowser } from '@angular/common';
 import { EditorStore } from '../../store/editor.store';
 import { Asset, Clip } from '../../models/editor.models';
 
 @Component({
-    selector: 'app-preview-player',
+    selector: 'preview-player',
     standalone: true,
     imports: [CommonModule],
     changeDetection: ChangeDetectionStrategy.OnPush,
     template: `
-        <div class="preview-container">
-            <div class="screen">
-                <canvas #canvasElement class="preview-canvas"></canvas>
-                
-                @if (activeVisualClip(); as clip) {
-                    <div class="clip-info">
-                        {{ clip.name }} · Frame: {{ currentFrame() }}/{{ getTotalFrames(clip) }}
-                    </div>
-                }
-            </div>
-            
-            <!-- Hidden Audio Elements -->
-            <div style="display: none;">
-                @for (clip of activeAudioClips(); track clip.id) {
-                    <audio 
-                        [src]="getAssetUrl(clip.assetId)"
-                        [id]="'audio-' + clip.id"
-                        class="audio-element">
-                    </audio>
-                }
-            </div>
+        <canvas
+            #canvasElement
+            class="preview-canvas"
+            [width]="store.projectSettings().width"
+            [height]="store.projectSettings().height"
+        ></canvas>
 
-            <div class="controls">
-                <button (click)="togglePlay()">{{ store.isPlaying() ? '⏸ Pause' : '▶ Play' }}</button>
-                <span class="time">{{ formatTime(store.currentTime()) }} / {{ formatTime(store.totalDuration()) }}</span>
-            </div>
+        <!-- Hidden Audio Elements -->
+        <div style="display: none;">
+            @for (clip of activeAudioClips(); track clip.id) {
+            <audio
+                [src]="getAssetUrl(clip.assetId)"
+                [id]="'audio-' + clip.id"
+                class="audio-element"
+            ></audio>
+            }
+        </div>
+
+        <div class="controls">
+            <button (click)="togglePlay()">
+                {{ store.isPlaying() ? '⏸ Pause' : '▶ Play' }}
+            </button>
+            <span class="time"
+                >{{ formatTime(store.currentTime()) }} /
+                {{ formatTime(store.totalDuration()) }}</span
+            >
         </div>
     `,
-    styles: [`
-        .preview-container {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            background: #000;
-            overflow: hidden;
-        }
-        .screen {
-            flex: 1;
-            position: relative;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #1a1a1a;
-        }
-        .preview-canvas {
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
-            background: #000;
-        }
-        .clip-info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: #00ff00;
-            background: rgba(0,0,0,0.7);
-            padding: 5px 10px;
-            font-size: 12px;
-            z-index: 10;
-            font-family: monospace;
-        }
-        .controls {
-            height: 50px;
-            background: #222;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 1rem;
-            color: white;
-        }
-        button {
-            padding: 0.5rem 1rem;
-            background: #0066cc;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            transition: background 0.2s;
-        }
-        button:hover {
-            background: #0052a3;
-        }
-        button:active {
-            background: #003d7a;
-        }
-        .time {
-            font-family: monospace;
-            font-size: 14px;
-        }
-    `]
+    styles: [
+        `
+            :host {
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+                background: #000;
+                overflow: hidden;
+                position: relative;
+            }
+            .preview-canvas {
+                max-width: 100%;
+                max-height: 100%;
+                width: auto;
+                height: auto;
+                background: #000;
+                margin: auto;
+                box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            }
+            .clip-info {
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                color: #00ff00;
+                background: rgba(0, 0, 0, 0.7);
+                padding: 5px 10px;
+                font-size: 12px;
+                z-index: 10;
+                font-family: monospace;
+            }
+            .controls {
+                height: 50px;
+                background: #222;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 1rem;
+                color: white;
+                position: absolute;
+                bottom: 10px;
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 10;
+            }
+            button {
+                padding: 0.5rem 1rem;
+                background: #0066cc;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                transition: background 0.2s;
+            }
+            button:hover {
+                background: #0052a3;
+            }
+            button:active {
+                background: #003d7a;
+            }
+            .time {
+                font-family: monospace;
+                font-size: 14px;
+            }
+        `,
+    ],
 })
 export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     store = inject(EditorStore);
@@ -114,16 +129,18 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     private audioElements: Map<string, HTMLAudioElement> = new Map();
     private lastFrameTime: number | null = null;
     private startTime: number = 0;
-    
+
     readonly currentFrame = signal(0);
 
     // Computed signals for active clips
     activeVisualClip = computed(() => {
         const time = this.store.currentTime();
         const allClips = this.store.clips();
-        const clips = allClips.filter(c =>
-            (c.type === 'video' || c.type === 'image') &&
-            time >= c.startTime && time < c.startTime + c.duration
+        const clips = allClips.filter(
+            (c) =>
+                (c.type === 'video' || c.type === 'image') &&
+                time >= c.startTime &&
+                time < c.startTime + c.duration
         );
         const result = clips[clips.length - 1] || null;
         console.log('activeVisualClip computed at time', time, ':', result);
@@ -132,10 +149,11 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
 
     activeAudioClips = computed(() => {
         const time = this.store.currentTime();
-        return this.store.clips().filter(c =>
-            c.type === 'audio' &&
-            time >= c.startTime && time < c.startTime + c.duration
-        );
+        return this.store
+            .clips()
+            .filter(
+                (c) => c.type === 'audio' && time >= c.startTime && time < c.startTime + c.duration
+            );
     });
 
     constructor() {
@@ -188,7 +206,7 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     }
 
     private getAsset(assetId: string): Asset | undefined {
-        return this.store.assets().find(a => a.id === assetId);
+        return this.store.assets().find((a) => a.id === assetId);
     }
 
     private startPlayback(): void {
@@ -247,9 +265,9 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
             const frameRate = asset.frameRate || 30;
             const frameIndex = Math.floor(clipTime * frameRate);
             const clampedIndex = Math.max(0, Math.min(frameIndex, asset.frames.length - 1));
-            
+
             this.currentFrame.set(clampedIndex);
-            
+
             const frame = asset.frames[clampedIndex];
             if (frame) {
                 this.renderFrameToCanvas(ctx, frame, canvasEl.width, canvasEl.height, clip);
@@ -272,12 +290,12 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
         clip: Clip
     ): void {
         ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-        
+
         const canvasAspect = canvasWidth / canvasHeight;
         const sourceAspect = source.width / source.height;
-        
+
         let drawWidth, drawHeight, offsetX, offsetY;
-        
+
         // Ajuste tipo "cover" para formato TikTok
         if (sourceAspect > canvasAspect) {
             drawHeight = canvasHeight;
@@ -290,19 +308,19 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
             offsetX = 0;
             offsetY = (canvasHeight - drawHeight) / 2;
         }
-        
+
         // Aplicar transformaciones del clip
         ctx.save();
         ctx.globalAlpha = clip.opacity || 1;
-        
+
         const centerX = canvasWidth / 2 + (clip.x || 0);
         const centerY = canvasHeight / 2 + (clip.y || 0);
-        
+
         ctx.translate(centerX, centerY);
-        ctx.rotate((clip.rotation || 0) * Math.PI / 180);
+        ctx.rotate(((clip.rotation || 0) * Math.PI) / 180);
         ctx.scale(clip.scale || 1, clip.scale || 1);
         ctx.translate(-centerX, -centerY);
-        
+
         ctx.drawImage(source, offsetX, offsetY, drawWidth, drawHeight);
         ctx.restore();
     }
@@ -318,9 +336,9 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
 
     private syncAudio(time: number): void {
         const audioClips = this.activeAudioClips();
-        audioClips.forEach(clip => {
+        audioClips.forEach((clip) => {
             const audioEl = this.getOrCreateAudioElement(clip.id, this.getAssetUrl(clip.assetId));
-            const clipTime = (time - clip.startTime) + (clip.offset || 0);
+            const clipTime = time - clip.startTime + (clip.offset || 0);
 
             if (audioEl.paused) {
                 audioEl.currentTime = clipTime;
@@ -330,7 +348,7 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     }
 
     private pauseAllMedia(): void {
-        this.audioElements.forEach(audio => audio.pause());
+        this.audioElements.forEach((audio) => audio.pause());
     }
 
     private getOrCreateAudioElement(clipId: string, url: string): HTMLAudioElement {
@@ -349,7 +367,7 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
     }
 
     getAssetUrl(assetId: string): string {
-        const asset = this.store.assets().find(a => a.id === assetId);
+        const asset = this.store.assets().find((a) => a.id === assetId);
         const url = asset?.url || '';
         return url;
     }
@@ -363,7 +381,7 @@ export class PreviewPlayerComponent implements AfterViewInit, OnDestroy {
 
     ngOnDestroy(): void {
         this.stopPlayback();
-        this.audioElements.forEach(audio => audio.pause());
+        this.audioElements.forEach((audio) => audio.pause());
         this.audioElements.clear();
     }
 }

@@ -49,4 +49,5 @@ You are an expert in TypeScript, Angular, and scalable web application developme
 ## Application
 
 -   Editor de videos profesional
--   SSR Angular 
+-   SSR Angular
+-   nunca usar el prefijo app- para crear componentes, ni selectores

@@ -1,10 +1,18 @@
-import { Component, inject, computed, ElementRef, ViewChild, HostListener, ChangeDetectionStrategy } from '@angular/core';
+import {
+    Component,
+    inject,
+    computed,
+    ElementRef,
+    ViewChild,
+    HostListener,
+    ChangeDetectionStrategy,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { EditorStore } from '../../store/editor.store';
 import { Clip, Track, AssetType } from '../../models/editor.models';
 
 @Component({
-    selector: 'app-timeline',
+    selector: 'timeline',
     standalone: true,
     imports: [CommonModule],
     changeDetection: ChangeDetectionStrategy.OnPush,
@@ -16,16 +24,18 @@ import { Clip, Track, AssetType } from '../../models/editor.models';
                 <button (click)="addTrack('video')">Add Video Track</button>
                 <button (click)="addTrack('audio')">Add Audio Track</button>
             </div>
-            
+
             <div class="timeline-content">
                 <!-- Track Headers -->
                 <div class="track-headers">
                     @for (track of store.tracks(); track track.id) {
-                        <div class="track-header" 
-                             (dragover)="onTrackDragOver($event, track)"
-                             (drop)="onTrackDrop($event, track)">
-                            {{ track.name }}
-                        </div>
+                    <div
+                        class="track-header"
+                        (dragover)="onTrackDragOver($event, track)"
+                        (drop)="onTrackDrop($event, track)"
+                    >
+                        {{ track.name }}
+                    </div>
                     }
                 </div>
 
@@ -36,110 +46,116 @@ import { Clip, Track, AssetType } from '../../models/editor.models';
 
                     <!-- Tracks -->
                     @for (track of store.tracks(); track track.id) {
-                        <div class="track-lane" 
-                             (dragover)="onTrackDragOver($event, track)"
-                             (drop)="onTrackDrop($event, track)">
-                            @for (clip of getClipsForTrack(track.id); track clip.id) {
-                                <div class="clip"
-                                     [class.selected]="store.selectedClipId() === clip.id"
-                                     [class.dragging]="dragState?.clipId === clip.id"
-                                     [style.left.px]="timeToPx(clip.startTime)"
-                                     [style.width.px]="timeToPx(clip.duration)"
-                                     (mousedown)="onClipMouseDown($event, clip)"
-                                     (click)="selectClip($event, clip)">
-                                    {{ clip.name }}
-                                </div>
-                            }
+                    <div
+                        class="track-lane"
+                        (dragover)="onTrackDragOver($event, track)"
+                        (drop)="onTrackDrop($event, track)"
+                    >
+                        @for (clip of getClipsForTrack(track.id); track clip.id) {
+                        <div
+                            class="clip"
+                            [class.selected]="store.selectedClipId() === clip.id"
+                            [class.dragging]="dragState?.clipId === clip.id"
+                            [style.left.px]="timeToPx(clip.startTime)"
+                            [style.width.px]="timeToPx(clip.duration)"
+                            (mousedown)="onClipMouseDown($event, clip)"
+                            (click)="selectClip($event, clip)"
+                        >
+                            {{ clip.name }}
                         </div>
+                        }
+                    </div>
                     }
                 </div>
             </div>
         </div>
     `,
-    styles: [`
-        .timeline-container {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-            background: #1e1e1e;
-            color: white;
-            border-top: 1px solid #333;
-        }
-        .toolbar {
-            height: 30px;
-            border-bottom: 1px solid #333;
-            display: flex;
-            align-items: center;
-            padding: 0 1rem;
-            gap: 1rem;
-        }
-        .timeline-content {
-            flex: 1;
-            display: flex;
-            overflow: hidden;
-        }
-        .track-headers {
-            width: 150px;
-            border-right: 1px solid #333;
-            background: #252526;
-        }
-        .track-header {
-            height: 50px;
-            border-bottom: 1px solid #333;
-            display: flex;
-            align-items: center;
-            padding: 0 1rem;
-            font-size: 0.8rem;
-        }
-        .tracks-area {
-            flex: 1;
-            overflow-x: auto;
-            position: relative;
-            background: #1e1e1e;
-        }
-        .track-lane {
-            height: 50px;
-            border-bottom: 1px solid #333;
-            position: relative;
-        }
-        .clip {
-            position: absolute;
-            top: 5px;
-            height: 40px;
-            background: #3a3d41;
-            border: 1px solid #555;
-            border-radius: 4px;
-            padding: 0 0.5rem;
-            font-size: 0.7rem;
-            display: flex;
-            align-items: center;
-            overflow: hidden;
-            white-space: nowrap;
-            cursor: pointer;
-            user-select: none;
-            z-index: 1;
-        }
-        .clip.selected {
-            border-color: #007acc;
-            background: #264f78;
-            z-index: 2;
-        }
-        .clip.dragging {
-            opacity: 0.8;
-            cursor: grabbing;
-            z-index: 100;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.5);
-        }
-        .playhead {
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            width: 2px;
-            background: red;
-            z-index: 10;
-            pointer-events: none;
-        }
-    `]
+    styles: [
+        `
+            .timeline-container {
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+                background: #1e1e1e;
+                color: white;
+                border-top: 1px solid #333;
+            }
+            .toolbar {
+                height: 30px;
+                border-bottom: 1px solid #333;
+                display: flex;
+                align-items: center;
+                padding: 0 1rem;
+                gap: 1rem;
+            }
+            .timeline-content {
+                flex: 1;
+                display: flex;
+                overflow: hidden;
+            }
+            .track-headers {
+                width: 150px;
+                border-right: 1px solid #333;
+                background: #252526;
+            }
+            .track-header {
+                height: 50px;
+                border-bottom: 1px solid #333;
+                display: flex;
+                align-items: center;
+                padding: 0 1rem;
+                font-size: 0.8rem;
+            }
+            .tracks-area {
+                flex: 1;
+                overflow-x: auto;
+                position: relative;
+                background: #1e1e1e;
+            }
+            .track-lane {
+                height: 50px;
+                border-bottom: 1px solid #333;
+                position: relative;
+            }
+            .clip {
+                position: absolute;
+                top: 5px;
+                height: 40px;
+                background: #3a3d41;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 0 0.5rem;
+                font-size: 0.7rem;
+                display: flex;
+                align-items: center;
+                overflow: hidden;
+                white-space: nowrap;
+                cursor: pointer;
+                user-select: none;
+                z-index: 1;
+            }
+            .clip.selected {
+                border-color: #007acc;
+                background: #264f78;
+                z-index: 2;
+            }
+            .clip.dragging {
+                opacity: 0.8;
+                cursor: grabbing;
+                z-index: 100;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            }
+            .playhead {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                width: 2px;
+                background: red;
+                z-index: 10;
+                pointer-events: none;
+            }
+        `,
+    ],
 })
 export class TimelineComponent {
     store = inject(EditorStore);
@@ -155,7 +171,7 @@ export class TimelineComponent {
     } | null = null;
 
     getClipsForTrack(trackId: string): Clip[] {
-        return this.store.clips().filter(c => c.trackId === trackId);
+        return this.store.clips().filter((c) => c.trackId === trackId);
     }
 
     timeToPx(seconds: number): number {
@@ -187,14 +203,14 @@ export class TimelineComponent {
     onClipMouseDown(event: MouseEvent, clip: Clip) {
         event.preventDefault();
         event.stopPropagation();
-        
+
         this.dragState = {
             clipId: clip.id,
             startX: event.clientX,
             startStartTime: clip.startTime,
-            startTrackId: clip.trackId
+            startTrackId: clip.trackId,
         };
-        
+
         this.store.selectClip(clip.id);
     }
 
@@ -211,7 +227,7 @@ export class TimelineComponent {
         const snapThreshold = this.pxToTime(SNAP_THRESHOLD_PX);
         let snapped = false;
 
-        const otherClips = this.store.clips().filter(c => c.id !== this.dragState!.clipId);
+        const otherClips = this.store.clips().filter((c) => c.id !== this.dragState!.clipId);
 
         for (const other of otherClips) {
             // Snap to end of other clip
@@ -251,10 +267,10 @@ export class TimelineComponent {
     // Actually, to support vertical movement (changing tracks), we can check the Y position.
     // But since we don't have the track layout in memory easily, let's stick to horizontal + snapping first.
     // If the user needs to change tracks, they might expect to drag it up/down.
-    
+
     // Let's try to implement basic track switching based on mouse Y relative to tracksArea
     // This requires knowing the track height (50px).
-    
+
     onTrackDragOver(event: DragEvent, track: Track) {
         event.preventDefault();
     }
